@@ -1,6 +1,6 @@
 {
   "name": "laya-router",
-  "description": "Routes a Claude Code session to Haiku, Sonnet, Opus or Fable with a local Laya classifier.",
+  "description": "Auto-route each Claude Code session to Haiku, Sonnet, Opus or Fable from its first prompt. Classified locally, zero tokens.",
   "owner": {
     "name": "Marc Reichel"
   },
