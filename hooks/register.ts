@@ -21,6 +21,9 @@ type Answer = { choice?: unknown; confidence?: unknown; answer_confidence?: unkn
 export const register: Register = (on, options) => {
   const url = `${String(options.layaUrl ?? 'http://localhost:8000').replace(/\/+$/, '')}/v1/systemone`
   const apiKey = String(options.layaApiKey ?? '')
+  // Fable isn't in every subscription, so it's opt-in; without it Laya picks from the other three.
+  const enableFable = String(options.enableFable ?? false) === 'true'
+  const tiers = Object.fromEntries(Object.entries(TIERS).filter(([tier]) => tier !== 'fable' || enableFable))
 
   on('prompt.submit', async ($, e, next) => {
     // ponytail: first prompt only, since every switch re-reads the whole conversation uncached.
@@ -40,7 +43,7 @@ export const register: Register = (on, options) => {
             route: {
               type: 'choice',
               instructions: 'What kind of task is this?',
-              criteria: Object.fromEntries(Object.entries(TIERS).map(([tier, { describe }]) => [tier, describe])),
+              criteria: Object.fromEntries(Object.entries(tiers).map(([tier, { describe }]) => [tier, describe])),
             },
           },
         }),
@@ -50,7 +53,7 @@ export const register: Register = (on, options) => {
       }
 
       const answer: Answer = JSON.parse(response.text)?.answers?.route ?? {}
-      const tier = typeof answer.choice === 'string' ? TIERS[answer.choice] : undefined
+      const tier = typeof answer.choice === 'string' ? tiers[answer.choice] : undefined
       const confidence = Number(answer.answer_confidence ?? answer.confidence ?? 0)
 
       if (tier === undefined || confidence < MIN_CONFIDENCE) {

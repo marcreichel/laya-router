@@ -20,6 +20,12 @@
       "description": "Sent as a Bearer token; leave empty when laya-serve runs without LAYA_API_KEY.",
       "sensitive": true,
       "default": ""
+    },
+    "enableFable": {
+      "type": "boolean",
+      "title": "Route to Fable",
+      "description": "Lets prompts that invent theories, hypotheses or proofs go to claude-fable-5-1. Turn on only if your subscription includes Fable.",
+      "default": false
     }
   }
 }

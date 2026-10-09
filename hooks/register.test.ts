@@ -50,7 +50,7 @@ test('routes the session from its first prompt only', async ($, on) => {
   ])
 })
 
-test('leaves subagents alone', async ($, on) => {
+test('leaves subagents alone', { options: { enableFable: true } }, async ($, on) => {
   const w = world(on, { status: 200, choice: 'fable', confidence: 0.7 })
 
   await submit($, 'Invent a new theory of dark matter.')
@@ -61,6 +61,16 @@ test('leaves subagents alone', async ($, on) => {
     { model: 'claude-opus-5-5', effort: 'high' },
     { model: 'claude-fable-5-1', effort: 'xhigh' },
   ])
+})
+
+test('leaves Fable out unless enabled', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'fable', confidence: 0.9 })
+
+  await submit($, 'Invent a new theory of dark matter.')
+  await step($)
+
+  expect(Object.keys(JSON.parse(w.calls[0] ?? '').questions.route.criteria)).toEqual(['haiku', 'sonnet', 'opus'])
+  expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
 })
 
 test('keeps /model when laya is unsure', async ($, on) => {

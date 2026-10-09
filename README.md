@@ -7,7 +7,7 @@ A Claude Code mod that picks the model for a session from its first prompt. [Lay
 | a simple translation, lookup or rewrite | `claude-haiku-5-5` | low |
 | writing a common query, script, email or summary | `claude-sonnet-5-5` | medium |
 | finding and fixing a subtle bug or analysing a complex system | `claude-opus-5-5` | high |
-| inventing new theories, hypotheses or proofs | `claude-fable-5-1` | xhigh |
+| inventing new theories, hypotheses or proofs | `claude-fable-5-1` (opt-in, `enableFable`) | xhigh |
 
 ## How it behaves
 
@@ -33,6 +33,8 @@ Then, in Claude Code:
 ```
 
 Install asks for `layaUrl` (default `http://localhost:8000`) and an optional `layaApiKey`, which is sent as a Bearer token.
+
+Fable isn't included in every subscription, so `enableFable` is off by default. While it's off, Laya chooses between Haiku, Sonnet and Opus only.
 
 ## Develop
 
