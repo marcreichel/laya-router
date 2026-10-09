@@ -28,7 +28,8 @@ docker compose up -d --wait   # http://localhost:8000
 Then, in Claude Code:
 
 ```
-/plugin install laya-router --marketplace marcreichel/laya-router
+/plugin marketplace add marcreichel/laya-router
+/plugin install laya-router@laya-router
 ```
 
 Install asks for `layaUrl` (default `http://localhost:8000`) and an optional `layaApiKey`, which is sent as a Bearer token.
