@@ -23,7 +23,12 @@ export const register: Register = (on, options) => {
   const apiKey = String(options.layaApiKey ?? '')
   // Fable isn't in every subscription, so it's opt-in; without it Laya picks from the other three.
   const enableFable = String(options.enableFable ?? false) === 'true'
-  const tiers = Object.fromEntries(Object.entries(TIERS).filter(([tier]) => tier !== 'fable' || enableFable))
+  // Claude Code validates each <tier>Effort against its options before load, falling back to the default.
+  const tiers = Object.fromEntries(
+    Object.entries(TIERS)
+      .filter(([tier]) => tier !== 'fable' || enableFable)
+      .map(([tier, t]) => [tier, { ...t, effort: (options[`${tier}Effort`] as Effort | undefined) ?? t.effort }]),
+  )
 
   on('prompt.submit', async ($, e, next) => {
     // ponytail: first prompt only, since every switch re-reads the whole conversation uncached.

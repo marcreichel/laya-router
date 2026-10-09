@@ -26,6 +26,34 @@
       "title": "Route to Fable",
       "description": "Lets prompts that invent theories, hypotheses or proofs go to claude-fable-5-1. Turn on only if your subscription includes Fable.",
       "default": false
+    },
+    "haikuEffort": {
+      "type": "string",
+      "title": "Haiku effort",
+      "description": "Effort for sessions routed to Haiku.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "low"
+    },
+    "sonnetEffort": {
+      "type": "string",
+      "title": "Sonnet effort",
+      "description": "Effort for sessions routed to Sonnet.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "medium"
+    },
+    "opusEffort": {
+      "type": "string",
+      "title": "Opus effort",
+      "description": "Effort for sessions routed to Opus.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "high"
+    },
+    "fableEffort": {
+      "type": "string",
+      "title": "Fable effort",
+      "description": "Effort for sessions routed to Fable.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "xhigh"
     }
   }
 }

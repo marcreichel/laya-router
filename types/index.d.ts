@@ -1,4 +1,4 @@
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh'
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** The model the first prompt was routed to, and the /model it overrides. */
 export type Route = {

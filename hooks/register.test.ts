@@ -73,6 +73,15 @@ test('leaves Fable out unless enabled', async ($, on) => {
   expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
 })
 
+test('uses the configured effort per tier', { options: { opusEffort: 'max' } }, async ($, on) => {
+  const w = world(on, { status: 200, choice: 'opus', confidence: 0.9 })
+
+  await submit($, 'Why does this deadlock only under load?')
+  await step($)
+
+  expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'max' }])
+})
+
 test('keeps /model when laya is unsure', async ($, on) => {
   const w = world(on, { status: 200, choice: 'haiku', confidence: 0.39 })
 
