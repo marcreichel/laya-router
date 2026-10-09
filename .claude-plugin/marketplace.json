@@ -1,0 +1,13 @@
+{
+  "name": "laya-router",
+  "description": "Routes a Claude Code session to Haiku, Sonnet, Opus or Fable with a local Laya classifier.",
+  "owner": {
+    "name": "Marc Reichel"
+  },
+  "plugins": [
+    {
+      "name": "laya-router",
+      "source": "./"
+    }
+  ]
+}

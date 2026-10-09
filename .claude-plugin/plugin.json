@@ -1,0 +1,25 @@
+{
+  "name": "laya-router",
+  "version": "0.1.0",
+  "description": "Picks Haiku, Sonnet, Opus or Fable for a session from its first prompt, classified locally by laya-serve.",
+  "author": { "name": "Marc Reichel" },
+  "homepage": "https://github.com/marcreichel/laya-router",
+  "repository": "https://github.com/marcreichel/laya-router",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "layaUrl": {
+      "type": "string",
+      "title": "laya-serve URL",
+      "description": "Where laya-serve answers POST /v1/systemone.",
+      "default": "http://localhost:8000"
+    },
+    "layaApiKey": {
+      "type": "string",
+      "title": "laya-serve API key",
+      "description": "Sent as a Bearer token; leave empty when laya-serve runs without LAYA_API_KEY.",
+      "sensitive": true,
+      "default": ""
+    }
+  }
+}

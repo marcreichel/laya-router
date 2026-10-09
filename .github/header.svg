@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" xml:space="preserve" role="img" aria-labelledby="t d">
+  <title id="t">laya-router</title>
+  <desc id="d">A prompt routed to one of four Claude models: haiku, sonnet, opus or fable.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f1a"/>
+      <stop offset="1" stop-color="#161c33"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.7" cy="0.55" r="0.5">
+      <stop offset="0" stop-color="#d97757" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    <style>
+      .sans { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .route { fill: none; stroke: #2c3552; stroke-width: 2; }
+      .pill { fill: #121830; stroke: #2c3552; stroke-width: 1.5; }
+      .label { fill: #7f8aa8; font-size: 17px; }
+      .hot { stroke: #d97757; stroke-width: 2.5; stroke-dasharray: 6 8; animation: flow 1.2s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -28; } }
+      @media (prefers-reduced-motion: reduce) { .hot { animation: none; } }
+    </style>
+  </defs>
+
+  <rect width="1280" height="360" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#grid)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#glow)"/>
+
+  <text x="80" y="118" class="mono" font-size="15" letter-spacing="3" fill="#d97757">CLAUDE CODE MOD</text>
+  <text x="76" y="190" class="sans" font-size="76" font-weight="700" fill="#f2f4fa" letter-spacing="-2">laya-router</text>
+  <text x="80" y="238" class="sans" font-size="22" fill="#9aa4c0">Picks the model for a session from its first prompt.</text>
+  <text x="80" y="270" class="sans" font-size="22" fill="#9aa4c0">Classified locally by Laya, so routing costs no tokens.</text>
+
+  <path class="route" d="M806 180 C880 180 880 90 960 90"/>
+  <path class="route" d="M806 180 C880 180 880 150 960 150"/>
+  <path class="route" d="M806 180 C880 180 880 270 960 270"/>
+  <path class="route hot" d="M806 180 C880 180 880 210 960 210"/>
+
+  <circle cx="794" cy="180" r="20" fill="#d97757" fill-opacity="0.15"/>
+  <circle cx="794" cy="180" r="9" fill="#d97757"/>
+
+  <rect class="pill" x="960" y="72" width="240" height="36" rx="18"/>
+  <text x="984" y="96" class="mono label">haiku  · low</text>
+  <rect class="pill" x="960" y="132" width="240" height="36" rx="18"/>
+  <text x="984" y="156" class="mono label">sonnet · medium</text>
+  <rect x="960" y="192" width="240" height="36" rx="18" fill="#d97757" fill-opacity="0.12" stroke="#d97757" stroke-width="1.5"/>
+  <text x="984" y="216" class="mono" font-size="17" fill="#f2f4fa">opus   · high</text>
+  <text x="1180" y="216" class="mono" font-size="15" fill="#d97757" text-anchor="end">0.87</text>
+  <rect class="pill" x="960" y="252" width="240" height="36" rx="18"/>
+  <text x="984" y="276" class="mono label">fable  · xhigh</text>
+</svg>
