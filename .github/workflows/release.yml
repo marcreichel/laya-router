@@ -1,0 +1,48 @@
+# Publishing a release vX.Y.Z writes X.Y.Z into plugin.json on main and moves the tag onto that commit.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Write release version into plugin.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::Tag $TAG is not vX.Y.Z"; exit 1; }
+          version="${BASH_REMATCH[1]}"
+
+          if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$TAG does not point at the tip of main"
+            exit 1
+          fi
+
+          file=.claude-plugin/plugin.json
+          if [ "$(jq -r .version "$file")" = "$version" ]; then
+            echo "plugin.json already at $version"
+            exit 0
+          fi
+
+          # sed instead of jq to keep the file's formatting
+          sed -i -E "s/(\"version\": *\")[^\"]*\"/\1$version\"/" "$file"
+          [ "$(jq -r .version "$file")" = "$version" ]
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "🔖 Release $TAG"
+          git tag -f "$TAG"
+          git push origin main
+          git push -f origin "$TAG"
