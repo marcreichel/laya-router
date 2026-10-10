@@ -2,16 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Effort, Route } from '../types'
-
-// Laya knows tasks, not models: ask what kind of task the prompt is, with
-// descriptions tuned against laya-serve.
-const TIERS: Record<string, { model: string; effort: Effort; describe: string }> = {
-  haiku: { model: 'claude-haiku-5-5', effort: 'low', describe: 'a simple translation, lookup or rewrite' },
-  sonnet: { model: 'claude-sonnet-5-5', effort: 'medium', describe: 'writing a common query, script, email or summary' },
-  opus: { model: 'claude-opus-5-5', effort: 'high', describe: 'finding and fixing a subtle bug or analysing a complex system' },
-  fable: { model: 'claude-fable-5-1', effort: 'xhigh', describe: 'inventing new theories, hypotheses or proofs' },
-}
-const MIN_CONFIDENCE = 0.6
+import { MIN_CONFIDENCE, TIERS, routeQuestion } from './tiers'
 
 const isRouted = atom({ plugin: 'laya-router', key: 'isRouted' } as const, false)
 const route = atom({ plugin: 'laya-router', key: 'route' } as const, null)
@@ -29,10 +20,16 @@ export const register: Register = (on, options) => {
       .filter(([tier]) => tier !== 'fable' || enableFable)
       .map(([tier, t]) => [tier, { ...t, effort: (options[`${tier}Effort`] as Effort | undefined) ?? t.effort }]),
   )
+  const minConfidence = enableFable ? MIN_CONFIDENCE.withFable : MIN_CONFIDENCE.withoutFable
 
   on('prompt.submit', async ($, e, next) => {
     // ponytail: first prompt only, since every switch re-reads the whole conversation uncached.
     if (await read($, isRouted)) {
+      return next(e)
+    }
+    // Laya reads "hi" as a confident trivial task, which would lock the session to Haiku.
+    if (e.text.trim().split(/\s+/).length < 3) {
+      $.ui.status('laya: waiting for a longer prompt')
       return next(e)
     }
     await update($, isRouted, () => true)
@@ -44,13 +41,7 @@ export const register: Register = (on, options) => {
         body: JSON.stringify({
           state: e.text,
           model: 'jev-latest',
-          questions: {
-            route: {
-              type: 'choice',
-              instructions: 'What kind of task is this?',
-              criteria: Object.fromEntries(Object.entries(tiers).map(([tier, { describe }]) => [tier, describe])),
-            },
-          },
+          questions: { route: routeQuestion(tiers) },
         }),
       })
       if (!response.ok) {
@@ -58,13 +49,13 @@ export const register: Register = (on, options) => {
       }
 
       const answer: Answer = JSON.parse(response.text)?.answers?.route ?? {}
-      const tier = typeof answer.choice === 'string' ? tiers[answer.choice] : undefined
+      const [name, tier] = Object.entries(tiers).find(([, t]) => t.label === answer.choice) ?? []
       const confidence = Number(answer.answer_confidence ?? answer.confidence ?? 0)
 
-      if (tier === undefined || confidence < MIN_CONFIDENCE) {
+      if (name === undefined || tier === undefined || confidence < minConfidence) {
         $.ui.status(`laya: unsure (${confidence.toFixed(2)}), using /model`)
       } else {
-        const chosen: Route = { tier: String(answer.choice), model: tier.model, effort: tier.effort, confidence, sessionModel: await $.session.model() }
+        const chosen: Route = { tier: name, model: tier.model, effort: tier.effort, confidence, sessionModel: await $.session.model() }
         await update($, route, () => chosen)
         $.ui.status(`laya → ${chosen.tier} ${confidence.toFixed(2)}`)
       }

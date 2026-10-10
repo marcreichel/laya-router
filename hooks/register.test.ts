@@ -35,7 +35,7 @@ async function step($: Engine, agentId?: string) {
 }
 
 test('routes the session from its first prompt only', async ($, on) => {
-  const w = world(on, { status: 200, choice: 'haiku', confidence: 0.9 })
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
 
   await submit($, 'Translate hello into French.')
   await step($)
@@ -51,7 +51,7 @@ test('routes the session from its first prompt only', async ($, on) => {
 })
 
 test('leaves subagents alone', { options: { enableFable: true } }, async ($, on) => {
-  const w = world(on, { status: 200, choice: 'fable', confidence: 0.7 })
+  const w = world(on, { status: 200, choice: 'research', confidence: 0.7 })
 
   await submit($, 'Invent a new theory of dark matter.')
   await step($, 'agent-1')
@@ -64,17 +64,19 @@ test('leaves subagents alone', { options: { enableFable: true } }, async ($, on)
 })
 
 test('leaves Fable out unless enabled', async ($, on) => {
-  const w = world(on, { status: 200, choice: 'fable', confidence: 0.9 })
+  const w = world(on, { status: 200, choice: 'research', confidence: 0.9 })
 
   await submit($, 'Invent a new theory of dark matter.')
   await step($)
 
-  expect(Object.keys(JSON.parse(w.calls[0] ?? '').questions.route.criteria)).toEqual(['haiku', 'sonnet', 'opus'])
+  const criteria = JSON.parse(w.calls[0] ?? '').questions.route.criteria
+  expect(Object.keys(criteria)).toEqual(['trivial', 'routine', 'hard'])
+  expect(criteria.hard.endsWith(', new theory, formal proof')).toBe(true)
   expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
 })
 
 test('uses the configured effort per tier', { options: { opusEffort: 'max' } }, async ($, on) => {
-  const w = world(on, { status: 200, choice: 'opus', confidence: 0.9 })
+  const w = world(on, { status: 200, choice: 'hard', confidence: 0.9 })
 
   await submit($, 'Why does this deadlock only under load?')
   await step($)
@@ -83,12 +85,25 @@ test('uses the configured effort per tier', { options: { opusEffort: 'max' } }, 
 })
 
 test('keeps /model when laya is unsure', async ($, on) => {
-  const w = world(on, { status: 200, choice: 'haiku', confidence: 0.39 })
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.39 })
 
   await submit($, 'Help me with my thing.')
   await step($)
 
   expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
+})
+
+test('waits for a prompt of 3 words or more', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'hard', confidence: 0.9 })
+
+  await submit($, 'hi there')
+  await step($)
+  await submit($, 'Why does this deadlock only under load?')
+  await step($)
+
+  expect(w.calls.length).toBe(1)
+  expect(w.sent.map(s => s.model)).toEqual(['claude-opus-5-5', 'claude-opus-5-5'])
+  expect(JSON.parse(w.calls[0] ?? '').state).toBe('Why does this deadlock only under load?')
 })
 
 test('keeps /model when laya-serve is down', async ($, on) => {
@@ -101,7 +116,7 @@ test('keeps /model when laya-serve is down', async ($, on) => {
 })
 
 test('a manual /model switch turns routing off', async ($, on) => {
-  const w = world(on, { status: 200, choice: 'haiku', confidence: 0.9 })
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
 
   await submit($, 'Translate hello into French.')
   await step($)
@@ -122,7 +137,7 @@ test('sends the configured URL and API key', { options: { layaUrl: 'http://laya:
   on('ui.status', () => ({ value: undefined }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
 
-  await submit($, 'hi')
+  await submit($, 'Translate hello into French.')
 
   expect(seen).toEqual({ url: 'http://laya:9000/v1/systemone', auth: 'Bearer s3cret' })
 })
