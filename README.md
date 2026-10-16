@@ -16,6 +16,8 @@ A Claude Code mod that picks the model for a session from its first prompt. [Lay
 - **Main thread only.** Subagents keep the model their definition names.
 - **Falls back to `/model`.** When Laya's confidence is below 0.475 (0.375 with Fable, since four options spread it thinner), or `laya-serve` is unreachable, requests go out unchanged.
 - **`/model` wins.** Change the model by hand after routing and the mod stops overriding for the rest of the session. `/effort` alone doesn't: the mod can't read the session's effort, so it keeps sending the routed one.
+- **Suggests, never switches, when a task outgrows its model.** Three failed or identical tool calls in a row, or a later prompt Laya reads as a harder tier, put `laya: tools keep failing, consider /model opus` (or `going in circles`, `this got harder`) in the status line, once per session. Later prompts are classified in the background, so they don't wait on `laya-serve`. You decide whether the switch is worth re-reading the conversation uncached.
+- **Logs what happened, for calibration.** Each route (tier and confidence, or unsure/offline), nudge, manual `/model` switch (with the nudge it followed, if any), ignored nudge and session end is kept in the mod's store, the last 1000 entries. `/laya-log` prints them as JSON lines.
 - **The status line shows what happened**: `laya → opus 0.87`, `laya: unsure (0.39), using /model` (or `laya: unsure, using /model` for a prompt too short to send), `laya: offline, using /model`. `/model` keeps showing the session's own model, because a mod rewrites each request and can't set the session's model.
 
 ## Install
