@@ -40,7 +40,14 @@ function world(on: On, laya: { status: number; choice?: string; confidence?: num
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
 
-  return { sent, calls, healthChecks, statuses, setModel: (m: string) => (sessionModel = m) }
+  return {
+    sent,
+    calls,
+    healthChecks,
+    statuses,
+    setModel: (m: string) => (sessionModel = m),
+    answer: (choice: string, confidence: number) => Object.assign(laya, { choice, confidence }),
+  }
 }
 
 function submit($: Engine, text: string) {
@@ -62,7 +69,8 @@ test('routes the session from its first prompt only', async ($, on) => {
   await submit($, 'Now prove the Riemann hypothesis.')
   await step($)
 
-  expect(w.calls.length).toBe(1)
+  // The second call only checks whether to suggest a bigger model.
+  expect(w.calls.length).toBe(2)
   expect(JSON.parse(w.calls[0] ?? '').state).toBe('Translate hello into French.')
   expect(w.sent).toEqual([
     { model: 'claude-haiku-5-5', effort: 'low' },
@@ -260,4 +268,79 @@ test('keeps /model for the session after a bare skill call without skill.prompt'
   expect(w.calls.length).toBe(0)
   expect(w.sent.map(s => s.model)).toEqual(['claude-opus-5-5', 'claude-opus-5-5'])
   expect(w.statuses).toEqual(['laya: unsure, using /model'])
+})
+
+// The drift check runs after the prompt goes through, so let it finish.
+function settled() {
+  return new Promise(r => setTimeout(r, 10))
+}
+
+function toolCall($: Engine, command: string) {
+  return $.tool.call({ tool: 'Bash', tool_use_id: `t${Math.random()}`, command })
+}
+
+test('suggests a bigger model after repeated tool errors, never switches', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'routine', confidence: 0.9 })
+  on('tool.call', () => ({ isError: true, result: 'boom', text: 'boom' }))
+
+  await submit($, 'Add a CSV export to the report.')
+  await toolCall($, 'npm test')
+  await toolCall($, 'npm run build')
+  expect(w.statuses.at(-1)).toBe('laya → sonnet 0.90')
+  await toolCall($, 'npm run lint')
+  await step($)
+
+  expect(w.statuses.at(-1)).toBe('laya: tools keep failing, consider /model opus')
+  expect(w.sent.map(s => s.model)).toEqual(['claude-sonnet-5-5'])
+})
+
+test('suggests a bigger model when the same call keeps coming back', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'routine', confidence: 0.9 })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false }, text: '' }))
+
+  await submit($, 'Add a CSV export to the report.')
+  for (let i = 0; i < 4; i++) {
+    await toolCall($, 'npm test')
+  }
+
+  expect(w.statuses.at(-1)).toBe('laya: going in circles, consider /model opus')
+})
+
+test('suggests the tier a later prompt reads as, once', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+
+  await submit($, 'Translate hello into French.')
+  w.answer('hard', 0.9)
+  await submit($, 'Now why does the build deadlock under load?')
+  await settled()
+  await submit($, 'And the memory leak?')
+  await settled()
+
+  expect(w.statuses).toEqual(['laya → haiku 0.90', 'laya: this got harder, consider /model opus'])
+})
+
+test('logs the route, the nudge and a manual reroute', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+  on('clock.now', () => ({ value: 0 }))
+  on('session.id', () => ({ value: 's1' }))
+  const store = new Map<string, unknown>()
+  on('store.get', ($, e) => ({ value: store.get(e.key) }))
+  on('store.set', ($, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
+
+  await submit($, 'Translate hello into French.')
+  w.answer('hard', 0.9)
+  await submit($, 'Now why does the build deadlock under load?')
+  await settled()
+  w.setModel('claude-sonnet-5-5')
+  await step($)
+
+  const shown = await $.command.run({ command: 'laya-log', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  expect(shown.text?.split('\n').map(line => JSON.parse(line))).toEqual([
+    { at: '1970-01-01T00:00:00.000Z', session: 's1', event: 'route', tier: 'haiku', confidence: 0.9 },
+    { at: '1970-01-01T00:00:00.000Z', session: 's1', event: 'nudge', tier: 'opus', reason: 'this got harder' },
+    { at: '1970-01-01T00:00:00.000Z', session: 's1', event: 'reroute', from: 'haiku', to: 'claude-sonnet-5-5', nudged: 'opus' },
+  ])
 })

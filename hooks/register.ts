@@ -7,11 +7,22 @@ import { MIN_CONFIDENCE, TIERS, routeQuestion } from './tiers'
 const isRouted = atom({ plugin: 'laya-router', key: 'isRouted' } as const, false)
 const pending = atom({ plugin: 'laya-router', key: 'pending' } as const, null)
 const route = atom({ plugin: 'laya-router', key: 'route' } as const, null)
+const strikes = atom({ plugin: 'laya-router', key: 'strikes' } as const, 0)
+const lastCall = atom({ plugin: 'laya-router', key: 'lastCall' } as const, null)
+const nudge = atom({ plugin: 'laya-router', key: 'nudge' } as const, null)
 
 const LAYA_HEALTH_TIMEOUT_MS = 2000
 const SKILL_TEXT_CAP = 2000
+// Failed or repeated tool calls in a row before suggesting a bigger model.
+const STRIKES_TO_NUDGE = 3
+const LOG_CAP = 1000
 
-type Ctx = Parameters<Hook<'prompt.submit'>>[0] | Parameters<Hook<'turn.step'>>[0] | Parameters<Hook<'session.start'>>[0]
+type Ctx =
+  | Parameters<Hook<'prompt.submit'>>[0]
+  | Parameters<Hook<'turn.step'>>[0]
+  | Parameters<Hook<'session.start'>>[0]
+  | Parameters<Hook<'tool.call'>>[0]
+  | Parameters<Hook<'session.end'>>[0]
 type Config = { url: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number; headers: Record<string, string>; healthUrl: string; health?: Promise<boolean> }
 type Answer = { choice?: unknown; confidence?: unknown; answer_confidence?: unknown }
 
@@ -39,43 +50,90 @@ async function isUp($: Ctx, cfg: Config) {
   return cfg.health
 }
 
+// Calibration data: what was routed, and what happened after. Read it back with /laya-log.
+// ponytail: read-modify-write of one array, so two entries written at the same instant can lose one.
+async function log($: Ctx, event: string, data: Record<string, unknown>) {
+  try {
+    const entries = ((await $.store.get('log')) as unknown[] | undefined) ?? []
+    const entry = { at: new Date(await $.clock.now()).toISOString(), session: await $.session.id(), event, ...data }
+    await $.store.set('log', [...entries, entry].slice(-LOG_CAP))
+  } catch {}
+}
+
+// Throws when laya-serve is down or fails; `tier` is undefined for a choice no enabled tier has.
+async function ask($: Ctx, text: string, cfg: Config) {
+  if (!(await isUp($, cfg))) {
+    throw new Error('down')
+  }
+  // Laya answered /health, so wait for the answer however long it takes (up to the host's 30 s): CPU inference and
+  // a first request that loads the weights are slow, not broken.
+  const response = await $.http.fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...cfg.headers },
+    body: JSON.stringify({
+      state: text,
+      model: 'jev-latest',
+      questions: { route: routeQuestion(cfg.tiers) },
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  const answer: Answer = JSON.parse(response.text)?.answers?.route ?? {}
+  const [name, tier] = Object.entries(cfg.tiers).find(([, t]) => t.label === answer.choice) ?? []
+  return { name, tier, confidence: Number(answer.answer_confidence ?? answer.confidence ?? 0) }
+}
+
 async function classify($: Ctx, text: string, cfg: Config) {
   await update($, isRouted, () => true)
 
   try {
-    if (!(await isUp($, cfg))) {
-      throw new Error('down')
-    }
-    // Laya answered /health, so wait for the answer however long it takes (up to the host's 30 s): CPU inference and
-    // a first request that loads the weights are slow, not broken.
-    const response = await $.http.fetch(cfg.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...cfg.headers },
-      body: JSON.stringify({
-        state: text,
-        model: 'jev-latest',
-        questions: { route: routeQuestion(cfg.tiers) },
-      }),
-    })
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    const answer: Answer = JSON.parse(response.text)?.answers?.route ?? {}
-    const [name, tier] = Object.entries(cfg.tiers).find(([, t]) => t.label === answer.choice) ?? []
-    const confidence = Number(answer.answer_confidence ?? answer.confidence ?? 0)
+    const { name, tier, confidence } = await ask($, text, cfg)
 
     if (name === undefined || tier === undefined || confidence < cfg.minConfidence) {
       $.ui.status(`laya: unsure (${confidence.toFixed(2)}), using /model`)
+      await log($, 'route', { tier: null, confidence })
     } else {
       const chosen: Route = { tier: name, model: tier.model, effort: tier.effort, confidence, sessionModel: await $.session.model() }
       await update($, route, () => chosen)
       $.ui.status(`laya → ${chosen.tier} ${confidence.toFixed(2)}`)
+      await log($, 'route', { tier: name, confidence })
     }
   } catch {
     $.ui.status('laya: offline, using /model')
+    await log($, 'route', { tier: null, offline: true })
+  }
 }
 
+// Switching mid-session re-reads the whole conversation uncached, so the person decides: suggest once, never switch.
+async function suggest($: Ctx, tier: string, reason: string) {
+  if ((await read($, route)) === null || (await read($, nudge)) !== null) {
+    return
+  }
+  await update($, nudge, () => tier)
+  $.ui.status(`laya: ${reason}, consider /model ${tier}`)
+  await log($, 'nudge', { tier, reason })
+}
+
+function tierAbove(cfg: Config, tier: string) {
+  const order = Object.keys(cfg.tiers)
+  return order[order.indexOf(tier) + 1]
+}
+
+// A later prompt Laya reads as a harder tier than the session was routed to (debugging, architecture, …).
+async function checkDrift($: Ctx, text: string, cfg: Config) {
+  const chosen = await read($, route)
+  if (chosen === null || (await read($, nudge)) !== null) {
+    return
+  }
+  try {
+    const { name, confidence } = await ask($, text, cfg)
+    const order = Object.keys(cfg.tiers)
+    if (name !== undefined && confidence >= cfg.minConfidence && order.indexOf(name) > order.indexOf(chosen.tier)) {
+      await suggest($, name, 'this got harder')
+    }
+  } catch {}
 }
 
 export const register: Register = (on, options) => {
@@ -94,19 +152,41 @@ export const register: Register = (on, options) => {
 
   const cfg: Config = { url: `${base}/v1/systemone`, healthUrl: `${base}/health`, headers, tiers, minConfidence }
 
-  on('session.start', ($, e, next) => {
+  on('session.start', async ($, e, next) => {
     // Not awaited: the first session.start holds up startup.
     cfg.health = checkHealth($, cfg.healthUrl, headers)
+    await $.command.register({ name: 'laya-log', description: 'Show what laya-router routed and what happened after, as JSON lines' })
+    return next(e)
+  })
+
+  on('command.run', { command: 'laya-log' }, async $ => {
+    const entries = ((await $.store.get('log')) as unknown[] | undefined) ?? []
+    return { text: entries.length ? entries.map(entry => JSON.stringify(entry)).join('\n') : 'laya-router: nothing logged yet' }
+  })
+
+  on('session.end', async ($, e, next) => {
+    const suggested = await read($, nudge)
+    if (suggested !== null) {
+      await log($, 'nudge-ignored', { tier: suggested })
+    }
+    if (await read($, isRouted)) {
+      await log($, 'end', { reason: e.reason })
+    }
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
-    // ponytail: first prompt only, since every switch re-reads the whole conversation uncached.
+    // ponytail: route the first prompt only, since every switch re-reads the whole conversation uncached.
+    // Later prompts can only raise a nudge; not awaited, so the prompt never waits on laya-serve.
     if (await read($, isRouted)) {
+      void checkDrift($, e.text, cfg)
       return next(e)
     }
     // A skill call types as "/name args"; the skill's text only exists at skill.prompt, so classify it there.
     const name = /^\/(\S+)/.exec(e.text.trim())?.[1]
+    if (name === 'laya-log') {
+      return next(e)
+    }
     if (name !== undefined && (await $.command.list()).some((c) => c.name === name && (c.source === 'user' || c.source === 'plugin'))) {
       await update($, pending, () => e.text.trim())
       return next(e)
@@ -155,13 +235,37 @@ export const register: Register = (on, options) => {
     }
 
     // A manual /model after routing wins for the rest of the session.
-    if ((await $.session.model()) !== chosen.sessionModel) {
+    const sessionModel = await $.session.model()
+    if (sessionModel !== chosen.sessionModel) {
+      const suggested = await read($, nudge)
       await update($, route, () => null)
+      await update($, nudge, () => null)
       $.ui.status('laya: /model changed, routing off')
+      await log($, 'reroute', { from: chosen.tier, to: sessionModel, nudged: suggested })
 
       return yield* next(e)
     }
 
     return yield* next({ ...e, model: chosen.model, effort: chosen.effort })
+  })
+
+  // Repeated tool errors, or the same call again, mean the routed model is struggling.
+  on('tool.call', async ($, e, next) => {
+    const result = await next(e)
+    // Never rethrow from here: the call already ran.
+    try {
+      const chosen = e.agentId === undefined ? await read($, route) : null
+      if (chosen !== null) {
+        const call = JSON.stringify({ ...e, tool_use_id: undefined })
+        const isRetry = call === (await read($, lastCall))
+        await update($, lastCall, () => call)
+        const n = await update($, strikes, n => (result.isError || isRetry ? n + 1 : 0))
+        const up = tierAbove(cfg, chosen.tier)
+        if (n >= STRIKES_TO_NUDGE && up !== undefined) {
+          await suggest($, up, result.isError ? 'tools keep failing' : 'going in circles')
+        }
+      }
+    } catch {}
+    return result
   })
 }
