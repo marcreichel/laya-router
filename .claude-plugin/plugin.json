@@ -1,6 +1,6 @@
 {
   "name": "laya-router",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Auto-route each Claude Code session to Haiku, Sonnet, Opus or Fable from its first prompt. Classified locally, zero tokens.",
   "author": { "name": "Marc Reichel" },
   "homepage": "https://github.com/marcreichel/laya-router",
