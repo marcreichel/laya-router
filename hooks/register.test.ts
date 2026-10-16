@@ -3,22 +3,33 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 // Stands in for laya-serve, the session's /model and the model request beneath the plugin.
-function world(on: On, laya: { status: number; choice?: string; confidence?: number; hang?: boolean }) {
+function world(on: On, laya: { status: number; choice?: string; confidence?: number; health?: number[] | 'hang'; delayMs?: number; timeFlies?: boolean }) {
   const sent: { model: string; effort?: unknown }[] = []
   const calls: string[] = []
+  const healthChecks: number[] = []
   const statuses: (string | undefined)[] = []
   let sessionModel = 'claude-opus-5-5'
 
-  on('http.fetch', ($, e) => {
+  on('http.fetch', async ($, e) => {
+    if (e.url.endsWith('/health')) {
+      if (laya.health === 'hang') {
+        return new Promise(() => {})
+      }
+      // Answers in turn, the last one for good; up unless told otherwise.
+      const status = laya.health?.[healthChecks.length] ?? laya.health?.at(-1) ?? 200
+      healthChecks.push(status)
+      return { value: { status, ok: status < 300, headers: {}, text: '' } }
+    }
     calls.push(e.init?.body ?? '')
-    if (laya.hang) {
-      return new Promise(() => {})
+    if (laya.delayMs) {
+      await new Promise(r => setTimeout(r, laya.delayMs))
     }
     return { value: { status: laya.status, ok: laya.status < 300, headers: {}, text: JSON.stringify({ answers: { route: { choice: laya.choice, answer_confidence: laya.confidence } } }) } }
   })
-  // The timeout only fires against a laya-serve that hangs.
-  on('clock.sleep', () => (laya.hang ? { value: undefined } : new Promise(() => {})))
+  // The health timeout only fires against a /health that hangs.
+  on('clock.sleep', () => (laya.health === 'hang' || laya.timeFlies ? { value: undefined } : new Promise(() => {})))
   on('session.model', () => ({ value: sessionModel }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('ui.status', ($, e) => {
     statuses.push(e.text)
     return { value: undefined }
@@ -29,7 +40,7 @@ function world(on: On, laya: { status: number; choice?: string; confidence?: num
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
 
-  return { sent, calls, statuses, setModel: (m: string) => (sessionModel = m) }
+  return { sent, calls, healthChecks, statuses, setModel: (m: string) => (sessionModel = m) }
 }
 
 function submit($: Engine, text: string) {
@@ -115,7 +126,7 @@ test('keeps /model for the session when the first prompt is under 3 words', asyn
   expect(w.statuses).toEqual(['laya: unsure, using /model'])
 })
 
-test('keeps /model when laya-serve is down', async ($, on) => {
+test('keeps /model when laya-serve fails to classify', async ($, on) => {
   const w = world(on, { status: 503 })
 
   await submit($, 'Translate hello into French.')
@@ -124,14 +135,58 @@ test('keeps /model when laya-serve is down', async ($, on) => {
   expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
 })
 
-test('gives up on a laya-serve that does not answer', async ($, on) => {
-  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9, hang: true })
+test('skips classifying when /health is down', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9, health: [503] })
 
   await submit($, 'Translate hello into French.')
   await step($)
 
+  expect(w.calls.length).toBe(0)
   expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
   expect(w.statuses).toEqual(['laya: offline, using /model'])
+})
+
+test('gives up on a /health that does not answer', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9, health: 'hang' })
+
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.calls.length).toBe(0)
+  expect(w.statuses).toEqual(['laya: offline, using /model'])
+})
+
+test('waits for a healthy but slow laya-serve', async ($, on) => {
+  // Time flies, so a timeout still raced against classify would win.
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9, delayMs: 50, timeFlies: true })
+
+  await $.session.start({ cwd: '/', surface: null, isInteractive: false })
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.sent).toEqual([{ model: 'claude-haiku-5-5', effort: 'low' }])
+})
+
+test('reuses the startup health check while laya-serve is up', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+
+  await $.session.start({ cwd: '/', surface: null, isInteractive: false })
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.healthChecks).toEqual([200])
+  expect(w.sent).toEqual([{ model: 'claude-haiku-5-5', effort: 'low' }])
+})
+
+test('checks /health again when laya-serve was down at startup', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9, health: [503, 200] })
+
+  await $.session.start({ cwd: '/', surface: null, isInteractive: false })
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.healthChecks).toEqual([503, 200])
+  expect(w.sent).toEqual([{ model: 'claude-haiku-5-5', effort: 'low' }])
 })
 
 test('a manual /model switch turns routing off', async ($, on) => {
@@ -149,16 +204,23 @@ test('a manual /model switch turns routing off', async ($, on) => {
 
 test('sends the configured URL and API key', { options: { layaUrl: 'http://laya:9000/', layaApiKey: 's3cret' } }, async ($, on) => {
   let seen: { url: string; auth?: string } | null = null
+  const health: (string | undefined)[] = []
   on('http.fetch', ($, e) => {
+    if (e.url.endsWith('/health')) {
+      health.push(e.init?.headers?.authorization)
+      return { value: { status: 200, ok: true, headers: {}, text: '' } }
+    }
     seen = { url: e.url, auth: e.init?.headers?.authorization }
     return { value: { status: 503, ok: false, headers: {}, text: '' } }
   })
+  on('clock.sleep', () => new Promise(() => {}))
   on('ui.status', () => ({ value: undefined }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
 
   await submit($, 'Translate hello into French.')
 
   expect(seen).toEqual({ url: 'http://laya:9000/v1/systemone', auth: 'Bearer s3cret' })
+  expect(health).toEqual(['Bearer s3cret'])
 })
 
 test('routes a skill call from its expanded text, not the typed command', async ($, on) => {

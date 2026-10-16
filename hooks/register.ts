@@ -8,32 +8,55 @@ const isRouted = atom({ plugin: 'laya-router', key: 'isRouted' } as const, false
 const pending = atom({ plugin: 'laya-router', key: 'pending' } as const, null)
 const route = atom({ plugin: 'laya-router', key: 'route' } as const, null)
 
-const LAYA_TIMEOUT_MS = 7500
+const LAYA_HEALTH_TIMEOUT_MS = 2000
 const SKILL_TEXT_CAP = 2000
 
-type Config = { url: string; apiKey: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number }
+type Ctx = Parameters<Hook<'prompt.submit'>>[0] | Parameters<Hook<'turn.step'>>[0] | Parameters<Hook<'session.start'>>[0]
+type Config = { url: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number; headers: Record<string, string>; healthUrl: string; health?: Promise<boolean> }
 type Answer = { choice?: unknown; confidence?: unknown; answer_confidence?: unknown }
 
-async function classify($: Parameters<Hook<'prompt.submit'>>[0] | Parameters<Hook<'turn.step'>>[0], text: string, signal: AbortSignal, cfg: Config) {
+// $.http.fetch takes no timeout or signal, so race /health against a short sleep: a cheap endpoint that's slow is down.
+// A request that loses keeps running in the background until the host gives up.
+async function checkHealth($: Ctx, url: string, headers: Record<string, string>) {
+  try {
+    const timer = new AbortController()
+    const timeout = $.clock.sleep(LAYA_HEALTH_TIMEOUT_MS, { signal: timer.signal }).then(() => {
+      throw new Error('timeout')
+    })
+    const response = await Promise.race([$.http.fetch(url, { headers }), timeout]).finally(() => timer.abort())
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+// Checked once at startup so the first prompt doesn't wait for it. Down (or never checked) is checked again before
+// classifying, so a laya-serve started after Claude Code still routes.
+async function isUp($: Ctx, cfg: Config) {
+  if (!(await cfg.health)) {
+    cfg.health = checkHealth($, cfg.healthUrl, cfg.headers)
+  }
+  return cfg.health
+}
+
+async function classify($: Ctx, text: string, cfg: Config) {
   await update($, isRouted, () => true)
 
   try {
-    // $.http.fetch takes no timeout or signal, so a laya-serve that isn't running would hold the prompt for the
-    // host's 30 s. Race it instead; a request that loses keeps running in the background until the host gives up.
-    const request = $.http.fetch(cfg.url, {
+    if (!(await isUp($, cfg))) {
+      throw new Error('down')
+    }
+    // Laya answered /health, so wait for the answer however long it takes (up to the host's 30 s): CPU inference and
+    // a first request that loads the weights are slow, not broken.
+    const response = await $.http.fetch(cfg.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}) },
+      headers: { 'content-type': 'application/json', ...cfg.headers },
       body: JSON.stringify({
         state: text,
         model: 'jev-latest',
         questions: { route: routeQuestion(cfg.tiers) },
       }),
     })
-    const timer = new AbortController()
-    const timeout = $.clock.sleep(LAYA_TIMEOUT_MS, { signal: AbortSignal.any([signal, timer.signal]) }).then(() => {
-      throw new Error('timeout')
-    })
-    const response = await Promise.race([request, timeout]).finally(() => timer.abort())
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
@@ -56,8 +79,9 @@ async function classify($: Parameters<Hook<'prompt.submit'>>[0] | Parameters<Hoo
 }
 
 export const register: Register = (on, options) => {
-  const url = `${String(options.layaUrl ?? 'http://localhost:8000').replace(/\/+$/, '')}/v1/systemone`
+  const base = String(options.layaUrl ?? 'http://localhost:8000').replace(/\/+$/, '')
   const apiKey = String(options.layaApiKey ?? '')
+  const headers: Record<string, string> = apiKey ? { authorization: `Bearer ${apiKey}` } : {}
   // Fable isn't in every subscription, so it's opt-in; without it Laya picks from the other three.
   const enableFable = String(options.enableFable ?? false) === 'true'
   // Claude Code validates each <tier>Effort against its options before load, falling back to the default.
@@ -68,7 +92,13 @@ export const register: Register = (on, options) => {
   )
   const minConfidence = enableFable ? MIN_CONFIDENCE.withFable : MIN_CONFIDENCE.withoutFable
 
-  const cfg = { url, apiKey, tiers, minConfidence }
+  const cfg: Config = { url: `${base}/v1/systemone`, healthUrl: `${base}/health`, headers, tiers, minConfidence }
+
+  on('session.start', ($, e, next) => {
+    // Not awaited: the first session.start holds up startup.
+    cfg.health = checkHealth($, cfg.healthUrl, headers)
+    return next(e)
+  })
 
   on('prompt.submit', async ($, e, next) => {
     // ponytail: first prompt only, since every switch re-reads the whole conversation uncached.
@@ -88,7 +118,7 @@ export const register: Register = (on, options) => {
       $.ui.status('laya: unsure, using /model')
       return next(e)
     }
-    await classify($, e.text, next.signal, cfg)
+    await classify($, e.text, cfg)
 
     return next(e)
   }).catch(($, e, next) => next(e)) // routing is best effort: never hold a prompt back
@@ -100,7 +130,7 @@ export const register: Register = (on, options) => {
       const typed = await read($, pending)
       if (typed !== null && !(await read($, isRouted))) {
         await update($, pending, () => null)
-        await classify($, `${typed}\n\n${e.text.slice(0, SKILL_TEXT_CAP)}`, next.signal, cfg)
+        await classify($, `${typed}\n\n${e.text.slice(0, SKILL_TEXT_CAP)}`, cfg)
       }
       return next(e)
     }).catch(($, e, next) => next(e))
@@ -113,7 +143,7 @@ export const register: Register = (on, options) => {
       await update($, pending, () => null)
       // Same rule as a plain prompt: a bare "/commit" says too little, so stay on /model.
       if (typed.split(/\s+/).length >= 3) {
-        await classify($, typed, next.signal, cfg)
+        await classify($, typed, cfg)
       } else {
         await update($, isRouted, () => true)
         $.ui.status('laya: unsure, using /model')
