@@ -21,6 +21,8 @@ declare module 'claude-code' {
       lastCall: string | null
       /** The tier the status line suggested moving up to, once per session. */
       nudge: string | null
+      /** The session's model at start, to tell a /model picked before the first prompt. */
+      startModel: string | null
     }
   }
 }
