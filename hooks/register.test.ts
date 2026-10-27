@@ -54,8 +54,8 @@ function submit($: Engine, text: string) {
   return $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
 }
 
-async function step($: Engine, agentId?: string) {
-  const stream = $.turn.step({ turnId: 't', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, ...(agentId ? { agentId } : {}) })
+async function step($: Engine, agentId?: string, model = 'claude-opus-5-5') {
+  const stream = $.turn.step({ turnId: 't', index: 0, model, effort: 'high', messageCount: 1, ...(agentId ? { agentId } : {}) })
   for await (const _ of stream) {
     // drained, so the request beneath runs
   }
@@ -216,11 +216,25 @@ test('keeps a /model picked before the first prompt', async ($, on) => {
   await $.session.start({ cwd: '/', surface: null, isInteractive: false })
   w.setModel('claude-sonnet-5-5')
   await submit($, 'Translate hello into French.')
-  await step($)
+  await step($, undefined, 'claude-sonnet-5-5')
 
   expect(w.calls.length).toBe(0)
-  expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
+  expect(w.sent).toEqual([{ model: 'claude-sonnet-5-5', effort: 'high' }])
   expect(w.statuses).toContain('laya: /model changed, routing off')
+})
+
+test('keeps a /model picked after /clear, before the next first prompt', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+  on('session.end', () => ({ sessionId: 's' }))
+
+  // /clear: the old session ends, the new one gets no session.start.
+  await $.session.end({ reason: 'clear', sessionId: 's', resume: { id: 's' } } as Parameters<Engine['session']['end']>[0])
+  w.setModel('claude-sonnet-5-5')
+  await submit($, 'Translate hello into French.')
+  await step($, undefined, 'claude-sonnet-5-5')
+
+  expect(w.calls.length).toBe(0)
+  expect(w.sent).toEqual([{ model: 'claude-sonnet-5-5', effort: 'high' }])
 })
 
 test('keeps a /model that names the current model', async ($, on) => {

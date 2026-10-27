@@ -25,7 +25,7 @@ type Ctx =
   | Parameters<Hook<'tool.call'>>[0]
   | Parameters<Hook<'session.end'>>[0]
   | Parameters<Hook<'command.run'>>[0]
-type Config = { url: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number; headers: Record<string, string>; healthUrl: string; health?: Promise<boolean> }
+type Config = { url: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number; headers: Record<string, string>; healthUrl: string; health?: Promise<boolean>; carriedModel?: string }
 type Answer = { choice?: unknown; confidence?: unknown; answer_confidence?: unknown }
 
 // $.http.fetch takes no timeout or signal, so race /health against a short sleep: a cheap endpoint that's slow is down.
@@ -90,7 +90,7 @@ async function ask($: Ctx, text: string, cfg: Config) {
 async function classify($: Ctx, text: string, cfg: Config) {
   await update($, isRouted, () => true)
   // A /model before the first prompt is a choice too: don't route over it.
-  const start = await read($, startModel)
+  const start = (await read($, startModel)) ?? cfg.carriedModel ?? null
   if (start !== null && (await $.session.model()) !== start) {
     $.ui.status('laya: /model changed, routing off')
     await log($, 'route', { tier: null, manual: true })
@@ -191,6 +191,11 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    // /clear and a resume go on under a new session with fresh state and no session.start, so its baseline comes
+    // from here.
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      cfg.carriedModel = await $.session.model()
+    }
     const suggested = await read($, nudge)
     if (suggested !== null) {
       await log($, 'nudge-ignored', { tier: suggested })
