@@ -10,6 +10,7 @@ const route = atom({ plugin: 'laya-router', key: 'route' } as const, null)
 const strikes = atom({ plugin: 'laya-router', key: 'strikes' } as const, 0)
 const lastCall = atom({ plugin: 'laya-router', key: 'lastCall' } as const, null)
 const nudge = atom({ plugin: 'laya-router', key: 'nudge' } as const, null)
+const startModel = atom({ plugin: 'laya-router', key: 'startModel' } as const, null)
 
 const LAYA_HEALTH_TIMEOUT_MS = 2000
 const SKILL_TEXT_CAP = 2000
@@ -23,6 +24,7 @@ type Ctx =
   | Parameters<Hook<'session.start'>>[0]
   | Parameters<Hook<'tool.call'>>[0]
   | Parameters<Hook<'session.end'>>[0]
+  | Parameters<Hook<'command.run'>>[0]
 type Config = { url: string; tiers: Record<string, (typeof TIERS)[string]>; minConfidence: number; headers: Record<string, string>; healthUrl: string; health?: Promise<boolean> }
 type Answer = { choice?: unknown; confidence?: unknown; answer_confidence?: unknown }
 
@@ -87,6 +89,13 @@ async function ask($: Ctx, text: string, cfg: Config) {
 
 async function classify($: Ctx, text: string, cfg: Config) {
   await update($, isRouted, () => true)
+  // A /model before the first prompt is a choice too: don't route over it.
+  const start = await read($, startModel)
+  if (start !== null && (await $.session.model()) !== start) {
+    $.ui.status('laya: /model changed, routing off')
+    await log($, 'route', { tier: null, manual: true })
+    return
+  }
 
   try {
     const { name, tier, confidence } = await ask($, text, cfg)
@@ -155,6 +164,9 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     // Not awaited: the first session.start holds up startup.
     cfg.health = checkHealth($, cfg.healthUrl, headers)
+    // Kept across reloads, so a /model picked before one still counts as picked.
+    const model = await $.session.model()
+    await update($, startModel, m => m ?? model)
     await $.command.register({ name: 'laya-log', description: 'Show what laya-router routed and what happened after, as JSON lines' })
     return next(e)
   })
@@ -162,6 +174,20 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'laya-log' }, async $ => {
     const entries = ((await $.store.get('log')) as unknown[] | undefined) ?? []
     return { text: entries.length ? entries.map(entry => JSON.stringify(entry)).join('\n') : 'laya-router: nothing logged yet' }
+  })
+
+  // Running /model is a choice even when it keeps the model ("/model opus" on Opus), which no snapshot can see.
+  on('command.run', { command: 'model' }, async ($, e, next) => {
+    const chosen = await read($, route)
+    if (chosen !== null) {
+      await log($, 'reroute', { from: chosen.tier, to: e.args || null, nudged: await read($, nudge) })
+    }
+    await update($, isRouted, () => true)
+    await update($, pending, () => null)
+    await update($, route, () => null)
+    await update($, nudge, () => null)
+    $.ui.status('laya: /model used, routing off')
+    return next(e)
   })
 
   on('session.end', async ($, e, next) => {

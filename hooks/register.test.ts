@@ -210,6 +210,31 @@ test('a manual /model switch turns routing off', async ($, on) => {
   expect(w.sent.map(s => s.model)).toEqual(['claude-haiku-5-5', 'claude-opus-5-5', 'claude-opus-5-5'])
 })
 
+test('keeps a /model picked before the first prompt', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+
+  await $.session.start({ cwd: '/', surface: null, isInteractive: false })
+  w.setModel('claude-sonnet-5-5')
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.calls.length).toBe(0)
+  expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
+  expect(w.statuses).toContain('laya: /model changed, routing off')
+})
+
+test('keeps a /model that names the current model', async ($, on) => {
+  const w = world(on, { status: 200, choice: 'trivial', confidence: 0.9 })
+  on('command.run', () => ({ text: '' }))
+
+  await $.command.run({ command: 'model', args: 'opus', origin: { kind: 'composer' } })
+  await submit($, 'Translate hello into French.')
+  await step($)
+
+  expect(w.calls.length).toBe(0)
+  expect(w.sent).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
+})
+
 test('sends the configured URL and API key', { options: { layaUrl: 'http://laya:9000/', layaApiKey: 's3cret' } }, async ($, on) => {
   let seen: { url: string; auth?: string } | null = null
   const health: (string | undefined)[] = []
